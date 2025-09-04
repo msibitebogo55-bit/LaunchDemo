@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>On-Campus Student TV</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Roboto', sans-serif;
+      background: #000;
+      color: #fff;
+      margin: 0;
+      padding: 0;
+    }
+    header {
+      padding: 15px;
+      font-size: 24px;
+      font-weight: bold;
+      background: #111;
+    }
+    #video-container {
+      max-width: 800px;
+      margin: 20px auto;
+      text-align: center;
+    }
+    #live-video {
+      width: 100%;
+      height: auto;
+      background: #000;
+    }
+    #video-info {
+      margin-top: 10px;
+      font-size: 18px;
+    }
+    #up-next {
+      max-width: 800px;
+      margin: 20px auto;
+    }
+    .next-video-card {
+      background: #222;
+      padding: 10px;
+      margin: 5px 0;
+      border-radius: 5px;
+    }
+    footer {
+      text-align: center;
+      padding: 15px;
+      background: #111;
+      margin-top: 30px;
+    }
+  </style>
+</head>
+<body>
+  <header>On-Campus Student TV</header>
+
+  <div id="video-container">
+    <video id="live-video" controls autoplay muted></video>
+    <div id="video-info">Loading live video...</div>
+  </div>
+
+  <div id="up-next">
+    <h3>Up Next</h3>
+    <div id="next-videos"></div>
+  </div>
+
+  <footer>&copy; 2025 On-Campus Student TV</footer>
+
+  <script>
+    const videoElement = document.getElementById('live-video');
+    const titleElement = document.getElementById('video-info');
+    const nextContainer = document.getElementById('next-videos');
+
+    let schedule = [];
+    let currentVideo = null;
+
+    async function fetchSchedule() {
+      const res = await fetch('/schedule');
+      schedule = await res.json();
+      updateUpNext();
+    }
+
+    async function fetchNow() {
+      const res = await fetch('/now');
+      const video = await res.json();
+      if (!video.id) return;
+
+      // Only update if different video
+      if (!currentVideo || currentVideo.id !== video.id) {
+        currentVideo = video;
+        playVideo(video);
+      }
+    }
+
+    function playVideo(video) {
+      const start = new Date(video.startTime);
+      const now = new Date();
+      const elapsed = (now - start) / 1000; // seconds
+      videoElement.src = video.url;
+      videoElement.currentTime = Math.max(elapsed, 0); // start at live point
+      videoElement.play().catch(e => console.error(e));
+      titleElement.innerText = `${video.title} (Live)`;
+      updateUpNext();
+    }
+
+    function updateUpNext() {
+      nextContainer.innerHTML = '';
+      if (!currentVideo) return;
+      const currentIndex = schedule.findIndex(v => v.id === currentVideo.id);
+      const nextVideos = schedule.slice(currentIndex + 1);
+      nextVideos.forEach(v => {
+        const div = document.createElement('div');
+        div.className = 'next-video-card';
+        div.innerText = v.title;
+        nextContainer.appendChild(div);
+      });
+    }
+
+    // Refresh current live video every 10 seconds
+    setInterval(fetchNow, 10000);
+    fetchSchedule();
+    fetchNow();
+
+    // Prevent seeking
+    videoElement.addEventListener('seeking', function() {
+      const liveTime = (new Date() - new Date(currentVideo.startTime)) / 1000;
+      if (Math.abs(videoElement.currentTime - liveTime) > 1) {
+        videoElement.currentTime = liveTime;
+      }
+    });
+  </script>
+</body>
+</html>
