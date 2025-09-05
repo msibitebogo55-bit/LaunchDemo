@@ -1,98 +1,72 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>BStream Live</title>
-  <style>
-    body { font-family: 'Roboto', sans-serif; background: #000; color: #fff; margin: 0; padding: 0; }
-    header { padding: 15px; font-size: 24px; font-weight: bold; background: #111; }
-    #video-container { text-align: center; margin: 20px; }
-    video { width: 80%; max-width: 900px; outline: none; }
-    #video-title { margin-top: 10px; font-size: 22px; font-weight: bold; }
-    #up-next { margin: 20px; }
-    .next-video-card { padding: 8px; background: #222; margin: 5px 0; border-radius: 5px; }
-    #ticker { background: #111; padding: 10px; text-align: center; font-weight: bold; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BStream Live</title>
+<style>
+  body { background: #000; color: #fff; font-family: Arial, sans-serif; margin:0; padding:0; }
+  header { padding: 15px; font-size: 24px; background: #111; }
+  #video-container { text-align:center; margin: 20px; }
+  video { width: 80%; max-width:900px; outline:none; }
+  #video-title { margin-top:10px; font-size:22px; font-weight:bold; }
+  #ticker { background:#111; padding:10px; text-align:center; font-weight:bold; }
+</style>
 </head>
 <body>
-  <header>BStream Live</header>
-  <div id="video-container">
-    <video id="live-video" autoplay muted></video>
-    <div id="video-title">Loading...</div>
-  </div>
+<header>BStream Live</header>
+<div id="video-container">
+  <video id="live-video" autoplay muted></video>
+  <div id="video-title">Loading...</div>
+</div>
+<div id="ticker">Welcome to BStream!</div>
 
-  <div id="up-next">
-    <h3>Up Next:</h3>
-    <div id="next-videos"></div>
-  </div>
+<script>
+const videoEl = document.getElementById("live-video");
+const titleEl = document.getElementById("video-title");
+let currentVideo = null;
 
-  <div id="ticker">Welcome to BStream! Enjoy your continuous TV experience.</div>
+// Disable seeking
+videoEl.controls = false;
+videoEl.addEventListener("seeking", () => {
+  if(currentVideo) videoEl.currentTime = getElapsedTime();
+});
 
-  <script>
-    const videoEl = document.getElementById("live-video");
-    const titleEl = document.getElementById("video-title");
-    const nextVideosEl = document.getElementById("next-videos");
-    let schedule = [];
-    let currentVideo = null;
+// Calculate elapsed time
+function getElapsedTime() {
+  const now = new Date();
+  const start = new Date(currentVideo.startTime);
+  return (now - start) / 1000;
+}
 
-    videoEl.controls = false;
-    videoEl.addEventListener("seeking", () => {
-      if (currentVideo) videoEl.currentTime = getCurrentPlayTime();
-    });
-
-    async function fetchSchedule() {
-      const res = await fetch("/schedule");
-      schedule = await res.json();
-      updateLiveVideo();
-      updateUpNext();
-    }
-
-    function getCurrentPlayTime() {
-      const now = new Date();
-      const start = new Date(currentVideo.startTime);
-      return Math.floor((now - start) / 1000);
-    }
-
-    function updateLiveVideo() {
-      const now = new Date();
-      currentVideo = schedule.find(v => {
-        const start = new Date(v.startTime);
-        const end = new Date(start.getTime() + v.duration * 1000);
-        return now >= start && now <= end;
-      });
-
-      if (currentVideo) {
-        const videoSrc = `/video/${currentVideo.id}`;
-        if (videoEl.src !== videoSrc) {
-          videoEl.src = videoSrc;
-          videoEl.currentTime = getCurrentPlayTime();
-          videoEl.play();
-          titleEl.innerText = currentVideo.title;
-        } else {
-          videoEl.currentTime = getCurrentPlayTime();
-        }
+// Load currently live video
+async function loadLive() {
+  try {
+    const res = await fetch("/now");
+    const video = await res.json();
+    if(video) {
+      currentVideo = video;
+      if(videoEl.src !== video.signedUrl) {
+        videoEl.src = video.signedUrl;
+        videoEl.currentTime = getElapsedTime();
+        videoEl.play();
+        titleEl.innerText = video.title;
       } else {
-        videoEl.pause();
-        videoEl.removeAttribute("src");
-        videoEl.load();
-        titleEl.innerText = "No live video currently";
+        videoEl.currentTime = getElapsedTime();
       }
+    } else {
+      currentVideo = null;
+      videoEl.src = "";
+      titleEl.innerText = "No live video currently";
     }
+  } catch(err) {
+    console.error(err);
+  }
+}
 
-    function updateUpNext() {
-      nextVideosEl.innerHTML = "";
-      const now = new Date();
-      const upcoming = schedule.filter(v => new Date(v.startTime) > now);
-      upcoming.forEach(v => {
-        const div = document.createElement("div");
-        div.className = "next-video-card";
-        div.innerText = `${v.title} at ${new Date(v.startTime).toLocaleTimeString()}`;
-        nextVideosEl.appendChild(div);
-      });
-    }
-
-    setInterval(fetchSchedule, 1000);
-    fetchSchedule();
-  </script>
+// Refresh every 5 seconds
+setInterval(loadLive, 5000);
+loadLive();
+</script>
 </body>
 </html>
