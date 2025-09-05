@@ -2,97 +2,97 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>BStream Upload</title>
-  <link rel="stylesheet" href="css/style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Upload Video - BStream</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    input, button { margin: 5px 0; padding: 8px; width: 100%; }
+    .progress { width: 100%; background: #eee; margin-top: 10px; height: 20px; border-radius: 5px; }
+    .progress-bar { height: 100%; width: 0; background: green; border-radius: 5px; text-align: center; color: white; }
+  </style>
 </head>
 <body>
-  <div class="container">
-    <h1>Upload Video</h1>
+  <h1>Upload Video</h1>
+  <form id="uploadForm">
+    <input type="text" id="title" placeholder="Video Title" required>
+    <input type="datetime-local" id="startTime" placeholder="Start Time" required>
+    <input type="number" id="duration" placeholder="Duration in seconds (default 3600)">
+    <input type="file" id="videoFile" accept="video/*" required>
+    <button type="submit">Generate Upload URL & Upload</button>
+  </form>
 
-    <form id="uploadForm">
-      <label>Video Title:</label><br>
-      <input type="text" id="title" required /><br><br>
-
-      <label>Start Time:</label><br>
-      <input type="datetime-local" id="startTime" required /><br><br>
-
-      <label>Duration (seconds, default 300):</label><br>
-      <input type="number" id="duration" /><br><br>
-
-      <label>Select Video:</label><br>
-      <input type="file" id="videoFile" accept="video/*" required /><br><br>
-
-      <button type="submit">Upload</button>
-    </form>
-
-    <div id="status"></div>
+  <div class="progress">
+    <div class="progress-bar" id="progressBar">0%</div>
   </div>
 
-  <script>
-    const form = document.getElementById("uploadForm");
-    const statusDiv = document.getElementById("status");
+  <div id="status"></div>
 
-    form.addEventListener("submit", async (e) => {
+  <script>
+    const form = document.getElementById('uploadForm');
+    const progressBar = document.getElementById('progressBar');
+    const statusDiv = document.getElementById('status');
+
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
 
-      const title = document.getElementById("title").value;
-      const startTime = document.getElementById("startTime").value;
-      const duration = document.getElementById("duration").value || 3600;
-      const file = document.getElementById("videoFile").files[0];
+      const title = document.getElementById('title').value;
+      const startTime = document.getElementById('startTime').value;
+      const duration = document.getElementById('duration').value;
+      const file = document.getElementById('videoFile').files[0];
 
-      if (!file) {
-        alert("Please select a video file!");
-        return;
-      }
-
-      statusDiv.innerHTML = "Requesting upload URL...";
+      if (!file) return alert("Select a video file.");
 
       try {
-        // Request pre-signed URL from server
-        const authHeader = "Basic " + btoa(prompt("Enter admin username:") + ":" + prompt("Enter admin password:"));
-        const res = await fetch("/generate-upload-url", {
-          method: "POST",
+        // Step 1: Get pre-signed URL from server
+        const authHeader = "Basic " + btoa(prompt("Admin Username") + ":" + prompt("Admin Password"));
+        const response = await fetch('/upload-url', {
+          method: 'POST',
           headers: {
-            "Content-Type": "application/json",
-            "Authorization": authHeader
+            'Content-Type': 'application/json',
+            'Authorization': authHeader
           },
           body: JSON.stringify({
             fileName: file.name,
-            fileType: file.type,
+            contentType: file.type,
             title,
             startTime,
             duration
           })
         });
 
-        if (!res.ok) {
-          const errMsg = await res.text();
-          throw new Error(errMsg);
-        }
+        const data = await response.json();
+        if (!data.uploadUrl) throw new Error(data.message || "Failed to get upload URL");
 
-        const data = await res.json();
-        const uploadUrl = data.uploadUrl;
+        // Step 2: Upload file directly to S3
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", data.uploadUrl, true);
+        xhr.setRequestHeader("Content-Type", file.type);
 
-        statusDiv.innerHTML = "Uploading video to S3...";
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            progressBar.style.width = percent + "%";
+            progressBar.textContent = percent + "%";
+          }
+        };
 
-        // Upload file directly to S3
-        const uploadRes = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: {
-            "Content-Type": file.type
-          },
-          body: file
-        });
+        xhr.onload = () => {
+          if (xhr.status === 200) {
+            statusDiv.innerHTML = `<p>Upload successful! Video scheduled from ${new Date(data.video.startTime).toLocaleString()}</p>`;
+          } else {
+            statusDiv.textContent = "Upload failed. Status: " + xhr.status;
+          }
+        };
 
-        if (!uploadRes.ok) {
-          throw new Error("Failed to upload video to S3");
-        }
+        xhr.onerror = () => {
+          statusDiv.textContent = "Upload error.";
+        };
 
-        statusDiv.innerHTML = `Upload successful! Video scheduled at ${new Date(data.video.startTime).toLocaleString()}`;
-        form.reset();
+        xhr.send(file);
+
       } catch (err) {
         console.error(err);
-        statusDiv.innerHTML = "Error: " + err.message;
+        statusDiv.textContent = "Error: " + err.message;
       }
     });
   </script>
