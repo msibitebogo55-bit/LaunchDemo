@@ -3,6 +3,8 @@ const express = require("express");
 const multer = require("multer");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs");
+const { PassThrough } = require("stream");
 
 // AWS SDK v3
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
@@ -21,11 +23,18 @@ const s3 = new S3Client({
   },
 });
 
-// Multer memory storage
-const upload = multer({ storage: multer.memoryStorage() });
+// Multer with disk storage (temp files, avoids RAM issue)
+const upload = multer({ dest: "temp_uploads/" });
 
-// In-memory schedule
+// Persistent schedule storage
+const scheduleFile = path.join(__dirname, "schedule.json");
 let schedules = [];
+if (fs.existsSync(scheduleFile)) {
+  schedules = JSON.parse(fs.readFileSync(scheduleFile));
+}
+function saveSchedule() {
+  fs.writeFileSync(scheduleFile, JSON.stringify(schedules, null, 2));
+}
 
 // Basic auth middleware
 function checkAuth(req, res, next) {
@@ -41,40 +50,39 @@ app.get("/upload-page", checkAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public/upload.html"));
 });
 
-// Upload endpoint with conflict checking and duration handling
+// Upload endpoint with conflict checking & streaming to S3
 app.post("/upload", checkAuth, upload.single("video"), async (req, res) => {
   try {
     let { title, startTime, duration } = req.body;
     duration = parseInt(duration) || 3600; // default 1 hour
     let startDate = new Date(startTime);
 
-    // Sort schedule by startTime
+    // Sort schedule and prevent overlaps
     schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-
-    // Adjust startTime to avoid overlaps
     for (let video of schedules) {
       const existingStart = new Date(video.startTime);
       const existingEnd = new Date(existingStart.getTime() + video.duration * 1000);
       const newEnd = new Date(startDate.getTime() + duration * 1000);
-
       if (startDate < existingEnd && newEnd > existingStart) {
-        // Shift new video to end of overlapping video
         startDate = new Date(existingEnd.getTime());
       }
     }
 
     const fileName = Date.now() + "-" + req.file.originalname;
+    const fileStream = fs.createReadStream(req.file.path);
+
+    const pass = new PassThrough();
+    fileStream.pipe(pass);
 
     const params = {
       Bucket: process.env.S3_BUCKET_NAME,
       Key: fileName,
-      Body: req.file.buffer,
+      Body: pass,
       ContentType: req.file.mimetype,
     };
 
     await s3.send(new PutObjectCommand(params));
 
-    // Public URL (assuming bucket policy allows public read)
     const videoUrl = `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileName}`;
 
     const videoData = {
@@ -84,8 +92,10 @@ app.post("/upload", checkAuth, upload.single("video"), async (req, res) => {
       startTime: startDate,
       duration,
     };
-
     schedules.push(videoData);
+    saveSchedule();
+
+    fs.unlinkSync(req.file.path); // remove temp file
 
     res.json({ message: "Video uploaded and scheduled!", video: videoData });
   } catch (err) {
@@ -94,7 +104,7 @@ app.post("/upload", checkAuth, upload.single("video"), async (req, res) => {
   }
 });
 
-// Get currently live video
+// Currently live video
 app.get("/now", (req, res) => {
   const now = new Date();
   const current = schedules.find((v) => {
