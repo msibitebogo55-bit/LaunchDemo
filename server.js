@@ -2,8 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
-const https = require("https");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 const app = express();
@@ -37,13 +36,13 @@ app.get("/upload-page", checkAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public/upload.html"));
 });
 
-// Generate pre-signed URL for S3 upload
+// Generate S3 pre-signed URL for uploading
 app.post("/upload-url", checkAuth, async (req, res) => {
   try {
     const { fileName, contentType, title, startTime, duration } = req.body;
     if (!fileName || !contentType || !startTime) return res.status(400).json({ message: "Missing parameters" });
 
-    const dur = parseInt(duration) || 3600;
+    const dur = parseInt(duration) || 3600; // default 1 hour
     let startDate = new Date(startTime);
 
     // Sort schedule and avoid overlaps
@@ -53,12 +52,11 @@ app.post("/upload-url", checkAuth, async (req, res) => {
       const existingEnd = new Date(existingStart.getTime() + video.duration * 1000);
       const newEnd = new Date(startDate.getTime() + dur * 1000);
       if (startDate < existingEnd && newEnd > existingStart) {
-        startDate = new Date(existingEnd.getTime());
+        startDate = new Date(existingEnd.getTime()); // shift to end of last overlapping video
       }
     }
 
     const key = Date.now() + "-" + fileName;
-
     const command = new PutObjectCommand({
       Bucket: process.env.S3_BUCKET_NAME,
       Key: key,
@@ -67,6 +65,7 @@ app.post("/upload-url", checkAuth, async (req, res) => {
 
     const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
 
+    // Add video to schedule
     const videoData = {
       id: Date.now(),
       title: title || fileName,
@@ -99,21 +98,28 @@ app.get("/schedule", (req, res) => {
   res.json(schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime)));
 });
 
-// Stream video with Range support
-app.get("/video/:id", (req, res) => {
-  const video = schedules.find(v => v.id == req.params.id);
-  if (!video) return res.status(404).send("Video not found");
+// Stream video directly from S3
+app.get("/video/:id", async (req, res) => {
+  try {
+    const video = schedules.find(v => v.id == req.params.id);
+    if (!video) return res.status(404).send("Video not found");
 
-  const url = new URL(video.url);
-  const options = { headers: { Range: req.headers.range || "bytes=0-" } };
+    const urlParts = new URL(video.url);
+    const key = urlParts.pathname.slice(1); // remove leading "/"
 
-  https.get(url, options, s3Res => {
-    res.writeHead(s3Res.statusCode, s3Res.headers);
-    s3Res.pipe(res);
-  }).on("error", err => {
+    const command = new GetObjectCommand({ Bucket: process.env.S3_BUCKET_NAME, Key: key });
+    const s3Response = await s3.send(command);
+
+    res.setHeader("Content-Type", s3Response.ContentType || "video/mp4");
+    if (s3Response.ContentLength) {
+      res.setHeader("Content-Length", s3Response.ContentLength);
+    }
+
+    s3Response.Body.pipe(res);
+  } catch (err) {
     console.error(err);
     res.status(500).send("Failed to stream video");
-  });
+  }
 });
 
 const PORT = process.env.PORT || 5000;
