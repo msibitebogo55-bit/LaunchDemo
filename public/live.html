@@ -79,57 +79,50 @@
     let schedule = [];
     let currentVideo = null;
 
-    // Disable controls and prevent seeking
+    // Disable seeking and controls
     videoEl.controls = false;
     videoEl.addEventListener("seeking", () => {
       if (currentVideo) videoEl.currentTime = getCurrentPlayTime();
-    });
-
-    // Enable fullscreen on double click
-    videoEl.addEventListener("dblclick", () => {
-      if (videoEl.requestFullscreen) videoEl.requestFullscreen();
     });
 
     // Fetch schedule from backend
     async function fetchSchedule() {
       const res = await fetch("/schedule");
       schedule = await res.json();
-      updateCurrentVideo();
+      updateLiveVideo();
       updateUpNext();
     }
 
-    // Calculate current play time for the video
+    // Calculate current play time for live illusion
     function getCurrentPlayTime() {
-      if (!currentVideo) return 0;
       const now = new Date();
       const start = new Date(currentVideo.startTime);
-      let seconds = Math.floor((now - start) / 1000);
-      return seconds >= 0 ? seconds : 0;
+      return Math.floor((now - start) / 1000);
     }
 
     // Update currently live video
-    function updateCurrentVideo() {
+    function updateLiveVideo() {
       const now = new Date();
-      const liveVideo = schedule.find(v => {
+      const videoNow = schedule.find(v => {
         const start = new Date(v.startTime);
         const end = new Date(start.getTime() + v.duration * 1000);
         return now >= start && now <= end;
       });
 
-      if (!liveVideo) {
+      if (videoNow) {
+        if (!currentVideo || videoEl.src !== videoNow.url) {
+          currentVideo = videoNow;
+          videoEl.src = currentVideo.url;
+          videoEl.onloadedmetadata = () => {
+            videoEl.currentTime = getCurrentPlayTime(); // jump to live point once
+            videoEl.play();
+          };
+          titleEl.innerText = currentVideo.title;
+        }
+      } else {
         currentVideo = null;
         videoEl.src = "";
         titleEl.innerText = "No live video currently";
-        return;
-      }
-
-      // Only switch video if it's a new one
-      if (!currentVideo || currentVideo.id !== liveVideo.id) {
-        currentVideo = liveVideo;
-        videoEl.src = currentVideo.url;
-        videoEl.currentTime = getCurrentPlayTime();
-        videoEl.play();
-        titleEl.innerText = currentVideo.title;
       }
     }
 
@@ -146,8 +139,8 @@
       });
     }
 
-    // Refresh schedule periodically
-    setInterval(fetchSchedule, 5000); // every 5 seconds
+    // Refresh live video every 5 seconds (no need for 1s)
+    setInterval(fetchSchedule, 5000);
 
     // Initial load
     fetchSchedule();
