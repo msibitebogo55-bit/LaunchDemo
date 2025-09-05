@@ -2,135 +2,99 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Upload Video - Admin</title>
+  <title>BStream Upload</title>
   <link rel="stylesheet" href="css/style.css">
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-  <style>
-    body {
-      font-family: 'Roboto', sans-serif;
-      background: #111;
-      color: #fff;
-      margin: 0;
-      padding: 0;
-    }
-    header {
-      padding: 15px;
-      font-size: 24px;
-      font-weight: bold;
-      background: #000;
-    }
-    main {
-      max-width: 600px;
-      margin: 30px auto;
-      padding: 20px;
-      background: #222;
-      border-radius: 8px;
-    }
-    label {
-      display: block;
-      margin-top: 15px;
-    }
-    input, button {
-      width: 100%;
-      padding: 8px;
-      margin-top: 5px;
-      border-radius: 5px;
-      border: none;
-    }
-    button {
-      background: #0b84f5;
-      color: #fff;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    .schedule-preview {
-      margin-top: 20px;
-      background: #333;
-      padding: 10px;
-      border-radius: 5px;
-    }
-    .schedule-item {
-      padding: 5px 0;
-      border-bottom: 1px solid #444;
-    }
-  </style>
 </head>
 <body>
-  <header>Admin Upload - On-Campus Student TV</header>
+  <div class="container">
+    <h1>Upload Video</h1>
 
-  <main>
-    <h2>Upload Video</h2>
     <form id="uploadForm">
-      <label>Video File</label>
-      <input type="file" name="video" required>
+      <label>Video Title:</label><br>
+      <input type="text" id="title" required /><br><br>
 
-      <label>Title</label>
-      <input type="text" name="title" placeholder="Episode title" required>
+      <label>Start Time:</label><br>
+      <input type="datetime-local" id="startTime" required /><br><br>
 
-      <label>Start Date & Time</label>
-      <input type="datetime-local" name="startTime" required>
+      <label>Duration (seconds, default 3600):</label><br>
+      <input type="number" id="duration" /><br><br>
 
-      <label>Duration (seconds)</label>
-      <input type="number" name="duration" placeholder="3600" value="3600">
+      <label>Select Video:</label><br>
+      <input type="file" id="videoFile" accept="video/*" required /><br><br>
 
-      <button type="submit">Upload & Schedule</button>
+      <button type="submit">Upload</button>
     </form>
 
-    <div class="schedule-preview">
-      <h3>Current Schedule</h3>
-      <div id="scheduleList">Loading...</div>
-    </div>
-
-    <div id="message"></div>
-  </main>
+    <div id="status"></div>
+  </div>
 
   <script>
-    const form = document.getElementById('uploadForm');
-    const scheduleList = document.getElementById('scheduleList');
-    const message = document.getElementById('message');
+    const form = document.getElementById("uploadForm");
+    const statusDiv = document.getElementById("status");
 
-    async function fetchSchedule() {
-      const res = await fetch('/schedule');
-      const data = await res.json();
-      if (!data.length) {
-        scheduleList.innerHTML = "<p>No scheduled videos</p>";
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const title = document.getElementById("title").value;
+      const startTime = document.getElementById("startTime").value;
+      const duration = document.getElementById("duration").value || 3600;
+      const file = document.getElementById("videoFile").files[0];
+
+      if (!file) {
+        alert("Please select a video file!");
         return;
       }
-      scheduleList.innerHTML = '';
-      data.forEach(v => {
-        const div = document.createElement('div');
-        div.className = 'schedule-item';
-        const start = new Date(v.startTime);
-        const end = new Date(start.getTime() + v.duration * 1000);
-        div.innerText = `${v.title} | ${start.toLocaleString()} - ${end.toLocaleString()}`;
-        scheduleList.appendChild(div);
-      });
-    }
 
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const formData = new FormData(form);
-      message.innerText = "Uploading...";
+      statusDiv.innerHTML = "Requesting upload URL...";
+
       try {
-        const res = await fetch('/upload', {
-          method: 'POST',
-          body: formData
+        // Request pre-signed URL from server
+        const authHeader = "Basic " + btoa(prompt("Enter admin username:") + ":" + prompt("Enter admin password:"));
+        const res = await fetch("/generate-upload-url", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": authHeader
+          },
+          body: JSON.stringify({
+            fileName: file.name,
+            fileType: file.type,
+            title,
+            startTime,
+            duration
+          })
         });
-        const data = await res.json();
-        if (res.ok) {
-          message.innerText = `✅ ${data.message}`;
-          form.reset();
-          fetchSchedule();
-        } else {
-          message.innerText = `❌ ${data.message || 'Upload failed'}`;
+
+        if (!res.ok) {
+          const errMsg = await res.text();
+          throw new Error(errMsg);
         }
+
+        const data = await res.json();
+        const uploadUrl = data.uploadUrl;
+
+        statusDiv.innerHTML = "Uploading video to S3...";
+
+        // Upload file directly to S3
+        const uploadRes = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: {
+            "Content-Type": file.type
+          },
+          body: file
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error("Failed to upload video to S3");
+        }
+
+        statusDiv.innerHTML = `Upload successful! Video scheduled at ${new Date(data.video.startTime).toLocaleString()}`;
+        form.reset();
       } catch (err) {
         console.error(err);
-        message.innerText = "❌ Upload failed";
+        statusDiv.innerHTML = "Error: " + err.message;
       }
     });
-
-    fetchSchedule();
   </script>
 </body>
 </html>
