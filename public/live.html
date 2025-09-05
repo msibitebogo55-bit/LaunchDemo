@@ -1,58 +1,68 @@
-<video id="live-video" autoplay></video>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BStream Live</title>
+  <style>
+    body { background: #000; color: #fff; text-align: center; font-family: Arial, sans-serif; }
+    video { width: 80%; max-width: 900px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>BStream Live</h1>
+  <video id="live-video" autoplay></video>
 
-<script>
-const videoEl = document.getElementById("live-video");
-let currentVideo = null;
-let schedule = [];
+  <script>
+    const videoEl = document.getElementById("live-video");
+    let currentVideo = null;
+    let schedule = [];
 
-// Disable controls so users can't seek
-videoEl.controls = false;
-videoEl.addEventListener("seeking", () => {
-  if (currentVideo) {
-    // Force video to stay at correct elapsed time
-    const now = new Date();
-    const start = new Date(currentVideo.startTime);
-    videoEl.currentTime = (now - start) / 1000;
-  }
-});
+    // Disable seeking
+    videoEl.controls = false;
+    videoEl.addEventListener("seeking", () => {
+      if (currentVideo) {
+        const now = new Date();
+        const start = new Date(currentVideo.startTime);
+        videoEl.currentTime = (now - start) / 1000;
+      }
+    });
 
-// Fetch schedule from backend
-async function fetchSchedule() {
-  const res = await fetch("/schedule");
-  schedule = await res.json();
-  updateLiveVideo();
-}
-
-// Calculate elapsed play time
-function getCurrentPlayTime(video) {
-  const now = new Date();
-  const start = new Date(video.startTime);
-  return (now - start) / 1000;
-}
-
-// Update currently live video
-function updateLiveVideo() {
-  const now = new Date();
-  currentVideo = schedule.find(v => {
-    const start = new Date(v.startTime);
-    const end = new Date(start.getTime() + v.duration * 1000);
-    return now >= start && now <= end;
-  });
-
-  if (currentVideo) {
-    if (videoEl.src !== currentVideo.url) {
-      videoEl.src = currentVideo.url;
-      videoEl.currentTime = getCurrentPlayTime(currentVideo);
-      videoEl.play();
-    } else {
-      videoEl.currentTime = getCurrentPlayTime(currentVideo);
+    async function fetchSchedule() {
+      const res = await fetch("/schedule");
+      schedule = await res.json();
+      updateLiveVideo();
     }
-  } else {
-    videoEl.src = "";
-  }
-}
 
-// Refresh every second
-setInterval(fetchSchedule, 1000);
-fetchSchedule();
-</script>
+    function getCurrentPlayTime(video) {
+      const now = new Date();
+      const start = new Date(video.startTime);
+      return (now - start) / 1000;
+    }
+
+    function updateLiveVideo() {
+      const now = new Date();
+      currentVideo = schedule.find(v => {
+        const start = new Date(v.startTime);
+        const end = new Date(start.getTime() + v.duration * 1000);
+        return now >= start && now <= end;
+      });
+
+      if (currentVideo) {
+        if (videoEl.src !== currentVideo.url) {
+          videoEl.src = currentVideo.url;
+          videoEl.currentTime = getCurrentPlayTime(currentVideo);
+          videoEl.play();
+        } else {
+          videoEl.currentTime = getCurrentPlayTime(currentVideo);
+        }
+      } else {
+        videoEl.src = "";
+      }
+    }
+
+    setInterval(fetchSchedule, 1000);
+    fetchSchedule();
+  </script>
+</body>
+</html>
+t>
