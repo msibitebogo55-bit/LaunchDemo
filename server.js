@@ -3,7 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
-const { v4: uuidv4 } = require("uuid");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 const app = express();
 app.use(express.json());
@@ -19,10 +19,10 @@ const s3 = new S3Client({
   },
 });
 
-// In-memory schedule (replace with DB later)
+// In-memory schedule
 let schedules = [];
 
-// Basic auth middleware for admin pages
+// Basic auth middleware
 function checkAuth(req, res, next) {
   const b64auth = (req.headers.authorization || "").split(" ")[1] || "";
   const [login, password] = Buffer.from(b64auth, "base64").toString().split(":");
@@ -31,53 +31,50 @@ function checkAuth(req, res, next) {
   res.status(401).send("Authentication required.");
 }
 
-// Admin upload page
+// Upload page
 app.get("/upload-page", checkAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public/upload.html"));
 });
 
-// Generate pre-signed URL for direct upload
-app.post("/generate-upload-url", checkAuth, async (req, res) => {
+// Generate S3 pre-signed URL for uploading
+app.post("/upload-url", checkAuth, async (req, res) => {
   try {
-    const { fileName, fileType, title, startTime, duration } = req.body;
-    if (!fileName || !fileType || !title || !startTime) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
+    const { fileName, contentType, title, startTime, duration } = req.body;
+    if (!fileName || !contentType || !startTime) return res.status(400).json({ message: "Missing parameters" });
 
-    // Check and adjust startTime to avoid overlaps
+    // Parse duration and start time
+    const dur = parseInt(duration) || 3600; // default 1 hour
     let startDate = new Date(startTime);
-    const dur = parseInt(duration) || 3600; // seconds
 
+    // Sort schedule and prevent overlaps
     schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
     for (let video of schedules) {
       const existingStart = new Date(video.startTime);
       const existingEnd = new Date(existingStart.getTime() + video.duration * 1000);
       const newEnd = new Date(startDate.getTime() + dur * 1000);
-
       if (startDate < existingEnd && newEnd > existingStart) {
         startDate = new Date(existingEnd.getTime());
       }
     }
 
-    const uniqueKey = `${Date.now()}-${uuidv4()}-${fileName}`;
+    // S3 key (file path)
+    const key = Date.now() + "-" + fileName;
 
     // Generate pre-signed URL
-    const params = {
+    const command = new PutObjectCommand({
       Bucket: process.env.S3_BUCKET_NAME,
-      Key: uniqueKey,
-      ContentType: fileType,
-    };
+      Key: key,
+      ContentType: contentType,
+      // No ACL because bucket has owner enforced
+    });
 
-    // Import from AWS SDK v3 for presigning
-    const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
-    const command = new PutObjectCommand(params);
-    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 }); // 1 hour valid
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
 
-    // Add to schedule (URL will be the S3 public URL after upload)
+    // Add to schedule
     const videoData = {
       id: Date.now(),
-      title,
-      url: `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${uniqueKey}`,
+      title: title || fileName,
+      url: `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`,
       startTime: startDate,
       duration: dur,
     };
@@ -90,7 +87,7 @@ app.post("/generate-upload-url", checkAuth, async (req, res) => {
   }
 });
 
-// Currently live video
+// Get currently live video
 app.get("/now", (req, res) => {
   const now = new Date();
   const current = schedules.find(v => {
