@@ -36,13 +36,17 @@
       e.preventDefault();
 
       const title = document.getElementById('title').value;
-      const startTime = document.getElementById('startTime').value;
+      const startTimeLocal = document.getElementById('startTime').value;
       const duration = document.getElementById('duration').value;
       const file = document.getElementById('videoFile').files[0];
 
       if (!file) return alert("Select a video file.");
 
       try {
+        // Convert local start time to UTC before sending
+        const localDate = new Date(startTimeLocal);
+        const utcDate = new Date(localDate.getTime() - localDate.getTimezoneOffset() * 60000);
+
         // Step 1: Get pre-signed URL from server
         const authHeader = "Basic " + btoa(prompt("Admin Username") + ":" + prompt("Admin Password"));
         const response = await fetch('/upload-url', {
@@ -55,7 +59,7 @@
             fileName: file.name,
             contentType: file.type,
             title,
-            startTime,
+            startTime: utcDate.toISOString(), // ✅ Send UTC time
             duration
           })
         });
