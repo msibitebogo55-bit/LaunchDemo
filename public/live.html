@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BStream Player</title>
+  <title>BStream Live</title>
   <link rel="stylesheet" href="css/style.css">
   <style>
     body {
@@ -66,12 +66,10 @@
   </style>
 </head>
 <body>
-  <header>BStream Player</header>
+  <header>BStream Live</header>
 
   <div id="video-container">
-    <video id="video-player" controls>
-      Your browser does not support HTML5 video.
-    </video>
+    <video id="video-player" autoplay muted></video>
     <div id="video-title">Loading...</div>
   </div>
 
@@ -80,7 +78,7 @@
     <div id="next-videos"></div>
   </div>
 
-  <div id="ticker">Welcome to BStream! Enjoy your videos.</div>
+  <div id="ticker">Welcome to BStream! Enjoy your continuous TV experience.</div>
 
   <script>
     const videoEl = document.getElementById("video-player");
@@ -88,53 +86,84 @@
     const nextVideosEl = document.getElementById("next-videos");
 
     let schedule = [];
-    let currentIndex = 0;
+    let currentVideo = null;
 
+    // Disable controls that allow seeking
+    videoEl.controls = true;
+    videoEl.addEventListener("seeking", () => {
+      if (currentVideo) {
+        videoEl.currentTime = getCurrentPlayTime();
+      }
+    });
+
+    // Fetch schedule from backend
     async function fetchSchedule() {
       try {
         const res = await fetch("/schedule");
         schedule = await res.json();
-        if (schedule.length > 0) {
-          loadVideo(currentIndex);
-          renderUpNext();
-        }
+        updateLiveVideo();
+        updateUpNext();
       } catch (err) {
         console.error("Error fetching schedule:", err);
       }
     }
 
-    function loadVideo(index) {
-      if (!schedule[index]) return;
-      const video = schedule[index];
-      videoEl.src = `/video/${video.id}`;
-      videoEl.play();
-      titleEl.innerText = video.title;
-      currentIndex = index;
+    // Calculate current play time for live illusion
+    function getCurrentPlayTime() {
+      if (!currentVideo) return 0;
+      const now = new Date();
+      const start = new Date(currentVideo.startTime);
+      let elapsed = Math.floor((now - start) / 1000);
+      if (elapsed < 0) elapsed = 0; // video not started yet
+      if (elapsed > currentVideo.duration) elapsed = currentVideo.duration; // finished
+      return elapsed;
     }
 
-    function renderUpNext() {
+    // Update currently live video
+    function updateLiveVideo() {
+      const now = new Date();
+      currentVideo = schedule.find(v => {
+        const start = new Date(v.startTime);
+        const end = new Date(start.getTime() + v.duration * 1000);
+        return now >= start && now <= end;
+      });
+
+      if (currentVideo) {
+        const newSrc = `/video/${currentVideo.id}`;
+        if (videoEl.src !== newSrc) {
+          videoEl.src = newSrc;
+          videoEl.currentTime = getCurrentPlayTime();
+          videoEl.play();
+          titleEl.innerText = currentVideo.title;
+        } else {
+          videoEl.currentTime = getCurrentPlayTime();
+        }
+      } else {
+        videoEl.src = "";
+        titleEl.innerText = "No live video currently";
+      }
+    }
+
+    // Update Up Next list
+    function updateUpNext() {
       nextVideosEl.innerHTML = "";
-      schedule.slice(currentIndex + 1).forEach((video, idx) => {
+      const now = new Date();
+      const upcoming = schedule.filter(v => new Date(v.startTime) > now);
+      upcoming.forEach(v => {
         const div = document.createElement("div");
         div.className = "next-video-card";
-        div.innerText = video.title;
-        div.onclick = () => loadVideo(currentIndex + idx + 1);
+        div.innerText = `${v.title} at ${new Date(v.startTime).toLocaleTimeString()}`;
         nextVideosEl.appendChild(div);
       });
     }
 
-    // Auto-play next video when current ends
-    videoEl.addEventListener("ended", () => {
-      if (currentIndex + 1 < schedule.length) {
-        loadVideo(currentIndex + 1);
-      }
-    });
+    // Refresh live video every second
+    setInterval(() => {
+      fetchSchedule();
+    }, 1000);
 
     // Initial load
     fetchSchedule();
-
-    // Optional: refresh schedule every 30 seconds
-    setInterval(fetchSchedule, 30000);
   </script>
 </body>
 </html>
