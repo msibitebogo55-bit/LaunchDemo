@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
-const { S3Client, PutObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 const app = express();
@@ -20,7 +20,7 @@ const s3 = new S3Client({
 
 let schedules = [];
 
-// --- Basic Auth Middleware ---
+// Basic auth
 function checkAuth(req, res, next) {
   const b64auth = (req.headers.authorization || "").split(" ")[1] || "";
   const [login, password] = Buffer.from(b64auth, "base64").toString().split(":");
@@ -29,21 +29,21 @@ function checkAuth(req, res, next) {
   res.status(401).send("Authentication required.");
 }
 
-// --- Upload Page ---
+// Upload page
 app.get("/upload-page", checkAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public/upload.html"));
 });
 
-// --- Generate Pre-signed URL for direct S3 upload ---
+// Generate S3 pre-signed URL
 app.post("/upload-url", checkAuth, async (req, res) => {
   try {
     const { fileName, contentType, title, startTime, duration } = req.body;
     if (!fileName || !contentType || !startTime) return res.status(400).json({ message: "Missing parameters" });
 
-    const dur = parseInt(duration) || 3600; // default 1 hour
+    const dur = parseInt(duration) || 3600; 
     let startDate = new Date(startTime);
 
-    // Sort schedule and prevent overlaps
+    // Prevent overlaps
     schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
     for (let video of schedules) {
       const existingStart = new Date(video.startTime);
@@ -69,9 +69,10 @@ app.post("/upload-url", checkAuth, async (req, res) => {
       key,
       startTime: startDate,
       duration: dur,
+      url: `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`
     };
-
     schedules.push(videoData);
+
     res.json({ uploadUrl, video: videoData });
   } catch (err) {
     console.error(err);
@@ -79,36 +80,29 @@ app.post("/upload-url", checkAuth, async (req, res) => {
   }
 });
 
-// --- Stream Video ---
-app.get("/video/:id", async (req, res) => {
-  const video = schedules.find(v => v.id == req.params.id);
-  if (!video) return res.status(404).send("Video not found");
-
-  try {
-    const command = new GetObjectCommand({ Bucket: process.env.S3_BUCKET_NAME, Key: video.key });
-    const data = await s3.send(command);
-
-    res.setHeader("Content-Type", "video/mp4");
-    res.setHeader("Accept-Ranges", "bytes");
-    data.Body.pipe(res);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Failed to stream video");
-  }
-});
-
-// --- Currently live video ---
-app.get("/now", (req, res) => {
+// Return currently live video with pre-signed URL
+app.get("/now", async (req, res) => {
   const now = new Date();
   const current = schedules.find(v => {
     const start = new Date(v.startTime);
     const end = new Date(start.getTime() + v.duration * 1000);
     return now >= start && now <= end;
   });
-  res.json(current || {});
+
+  if (current) {
+    // Generate pre-signed URL for browser streaming
+    const command = new PutObjectCommand({
+      Bucket: process.env.S3_BUCKET_NAME,
+      Key: current.key,
+    });
+    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+    res.json({ ...current, signedUrl });
+  } else {
+    res.json(null);
+  }
 });
 
-// --- Full schedule ---
+// Full schedule
 app.get("/schedule", (req, res) => {
   res.json(schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime)));
 });
