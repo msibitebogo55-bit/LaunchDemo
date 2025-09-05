@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const https = require("https");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
@@ -36,17 +37,16 @@ app.get("/upload-page", checkAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public/upload.html"));
 });
 
-// Generate S3 pre-signed URL for uploading
+// Generate pre-signed URL for S3 upload
 app.post("/upload-url", checkAuth, async (req, res) => {
   try {
     const { fileName, contentType, title, startTime, duration } = req.body;
     if (!fileName || !contentType || !startTime) return res.status(400).json({ message: "Missing parameters" });
 
-    // Parse duration and start time
-    const dur = parseInt(duration) || 3600; // default 1 hour
+    const dur = parseInt(duration) || 3600;
     let startDate = new Date(startTime);
 
-    // Sort schedule and prevent overlaps
+    // Sort schedule and avoid overlaps
     schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
     for (let video of schedules) {
       const existingStart = new Date(video.startTime);
@@ -57,20 +57,16 @@ app.post("/upload-url", checkAuth, async (req, res) => {
       }
     }
 
-    // S3 key (file path)
     const key = Date.now() + "-" + fileName;
 
-    // Generate pre-signed URL
     const command = new PutObjectCommand({
       Bucket: process.env.S3_BUCKET_NAME,
       Key: key,
       ContentType: contentType,
-      // No ACL because bucket has owner enforced
     });
 
     const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
 
-    // Add to schedule
     const videoData = {
       id: Date.now(),
       title: title || fileName,
@@ -103,11 +99,21 @@ app.get("/schedule", (req, res) => {
   res.json(schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime)));
 });
 
-// Redirect video requests to S3 URL
+// Stream video with Range support
 app.get("/video/:id", (req, res) => {
   const video = schedules.find(v => v.id == req.params.id);
   if (!video) return res.status(404).send("Video not found");
-  res.redirect(video.url);
+
+  const url = new URL(video.url);
+  const options = { headers: { Range: req.headers.range || "bytes=0-" } };
+
+  https.get(url, options, s3Res => {
+    res.writeHead(s3Res.statusCode, s3Res.headers);
+    s3Res.pipe(res);
+  }).on("error", err => {
+    console.error(err);
+    res.status(500).send("Failed to stream video");
+  });
 });
 
 const PORT = process.env.PORT || 5000;
