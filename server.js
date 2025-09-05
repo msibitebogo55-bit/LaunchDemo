@@ -1,11 +1,9 @@
 require("dotenv").config();
 const express = require("express");
-const multer = require("multer");
 const cors = require("cors");
 const path = require("path");
-
-// AWS SDK v3
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 app.use(express.json());
@@ -21,13 +19,10 @@ const s3 = new S3Client({
   },
 });
 
-// Multer memory storage
-const upload = multer({ storage: multer.memoryStorage() });
-
-// In-memory schedule
+// In-memory schedule (replace with DB later)
 let schedules = [];
 
-// Basic auth middleware
+// Basic auth middleware for admin pages
 function checkAuth(req, res, next) {
   const b64auth = (req.headers.authorization || "").split(" ")[1] || "";
   const [login, password] = Buffer.from(b64auth, "base64").toString().split(":");
@@ -36,68 +31,69 @@ function checkAuth(req, res, next) {
   res.status(401).send("Authentication required.");
 }
 
-// Upload page
+// Admin upload page
 app.get("/upload-page", checkAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public/upload.html"));
 });
 
-// Upload endpoint with conflict checking and duration handling
-app.post("/upload", checkAuth, upload.single("video"), async (req, res) => {
+// Generate pre-signed URL for direct upload
+app.post("/generate-upload-url", checkAuth, async (req, res) => {
   try {
-    let { title, startTime, duration } = req.body;
-    duration = parseInt(duration) || 3600; // default 1 hour
+    const { fileName, fileType, title, startTime, duration } = req.body;
+    if (!fileName || !fileType || !title || !startTime) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    // Check and adjust startTime to avoid overlaps
     let startDate = new Date(startTime);
+    const dur = parseInt(duration) || 3600; // seconds
 
-    // Sort schedule by startTime
     schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-
-    // Adjust startTime to avoid overlaps
     for (let video of schedules) {
       const existingStart = new Date(video.startTime);
       const existingEnd = new Date(existingStart.getTime() + video.duration * 1000);
-      const newEnd = new Date(startDate.getTime() + duration * 1000);
+      const newEnd = new Date(startDate.getTime() + dur * 1000);
 
       if (startDate < existingEnd && newEnd > existingStart) {
-        // Shift new video to end of overlapping video
         startDate = new Date(existingEnd.getTime());
       }
     }
 
-    const fileName = Date.now() + "-" + req.file.originalname;
+    const uniqueKey = `${Date.now()}-${uuidv4()}-${fileName}`;
 
+    // Generate pre-signed URL
     const params = {
       Bucket: process.env.S3_BUCKET_NAME,
-      Key: fileName,
-      Body: req.file.buffer,
-      ContentType: req.file.mimetype,
+      Key: uniqueKey,
+      ContentType: fileType,
     };
 
-    await s3.send(new PutObjectCommand(params));
+    // Import from AWS SDK v3 for presigning
+    const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+    const command = new PutObjectCommand(params);
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 }); // 1 hour valid
 
-    // Public URL (assuming bucket policy allows public read)
-    const videoUrl = `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileName}`;
-
+    // Add to schedule (URL will be the S3 public URL after upload)
     const videoData = {
       id: Date.now(),
       title,
-      url: videoUrl,
+      url: `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${uniqueKey}`,
       startTime: startDate,
-      duration,
+      duration: dur,
     };
-
     schedules.push(videoData);
 
-    res.json({ message: "Video uploaded and scheduled!", video: videoData });
+    res.json({ uploadUrl, video: videoData });
   } catch (err) {
     console.error(err);
-    res.status(500).send("Upload failed");
+    res.status(500).json({ message: "Failed to generate upload URL" });
   }
 });
 
-// Get currently live video
+// Currently live video
 app.get("/now", (req, res) => {
   const now = new Date();
-  const current = schedules.find((v) => {
+  const current = schedules.find(v => {
     const start = new Date(v.startTime);
     const end = new Date(start.getTime() + v.duration * 1000);
     return now >= start && now <= end;
@@ -112,7 +108,7 @@ app.get("/schedule", (req, res) => {
 
 // Redirect video requests to S3 URL
 app.get("/video/:id", (req, res) => {
-  const video = schedules.find((v) => v.id == req.params.id);
+  const video = schedules.find(v => v.id == req.params.id);
   if (!video) return res.status(404).send("Video not found");
   res.redirect(video.url);
 });
