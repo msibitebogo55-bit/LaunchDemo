@@ -2,65 +2,25 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BStream Live</title>
   <link rel="stylesheet" href="css/style.css">
   <style>
-    body {
-      font-family: 'Roboto', sans-serif;
-      background: #000;
-      color: #fff;
-      margin: 0;
-      padding: 0;
-    }
-
-    header {
-      padding: 15px;
-      font-size: 24px;
-      font-weight: bold;
-      background: #111;
-    }
-
-    #video-container {
-      text-align: center;
-      margin: 20px;
-    }
-
-    video {
-      width: 80%;
-      max-width: 900px;
-      outline: none;
-    }
-
-    #video-title {
-      margin-top: 10px;
-      font-size: 22px;
-      font-weight: bold;
-    }
-
-    #up-next {
-      margin: 20px;
-    }
-
-    .next-video-card {
-      padding: 8px;
-      background: #222;
-      margin: 5px 0;
-      border-radius: 5px;
-    }
-
-    #ticker {
-      background: #111;
-      padding: 10px;
-      text-align: center;
-      font-weight: bold;
-    }
+    body { font-family: 'Roboto', sans-serif; background: #000; color: #fff; margin: 0; padding: 0; }
+    header { padding: 15px; font-size: 24px; font-weight: bold; background: #111; }
+    #video-container { text-align: center; margin: 20px; }
+    video { width: 80%; max-width: 900px; outline: none; }
+    #video-title { margin-top: 10px; font-size: 22px; font-weight: bold; }
+    #up-next { margin: 20px; }
+    .next-video-card { padding: 8px; background: #222; margin: 5px 0; border-radius: 5px; }
+    #ticker { background: #111; padding: 10px; text-align: center; font-weight: bold; }
   </style>
 </head>
 <body>
   <header>BStream Live</header>
 
   <div id="video-container">
-    <video id="live-video" autoplay muted></video>
+    <video id="live-video" autoplay muted controlsList="nodownload nofullscreen noremoteplayback"></video>
     <div id="video-title">Loading...</div>
   </div>
 
@@ -79,59 +39,46 @@
     let schedule = [];
     let currentVideo = null;
 
-    // Disable seeking and controls
+    // Disable seeking
     videoEl.controls = false;
     videoEl.addEventListener("seeking", () => {
       if (currentVideo) videoEl.currentTime = getCurrentPlayTime();
     });
 
-    // Fetch schedule from backend
-    async function fetchSchedule() {
-      const res = await fetch("/schedule");
-      schedule = await res.json();
-      updateLiveVideo();
-      updateUpNext();
-    }
-
-    // Calculate current play time for live illusion
     function getCurrentPlayTime() {
       const now = new Date();
       const start = new Date(currentVideo.startTime);
       return Math.floor((now - start) / 1000);
     }
 
-    // Update currently live video
-    function updateLiveVideo() {
+    async function updateLiveVideo() {
+      const res = await fetch("/schedule");
+      schedule = await res.json();
       const now = new Date();
-      const videoNow = schedule.find(v => {
+
+      const live = schedule.find(v => {
         const start = new Date(v.startTime);
         const end = new Date(start.getTime() + v.duration * 1000);
         return now >= start && now <= end;
       });
 
-      if (videoNow) {
-        if (!currentVideo || videoEl.src !== videoNow.url) {
-          currentVideo = videoNow;
-          videoEl.src = currentVideo.url;
-          videoEl.onloadedmetadata = () => {
-            videoEl.currentTime = getCurrentPlayTime(); // jump to live point once
+      if (live) {
+        if (!currentVideo || videoEl.src !== `/video/${live.id}`) {
+          currentVideo = live;
+          videoEl.src = `/video/${currentVideo.id}`;
+          videoEl.addEventListener("loadedmetadata", () => {
+            videoEl.currentTime = Math.min(getCurrentPlayTime(), videoEl.duration - 1);
             videoEl.play();
-          };
+          }, { once: true });
           titleEl.innerText = currentVideo.title;
         }
       } else {
-        currentVideo = null;
         videoEl.src = "";
         titleEl.innerText = "No live video currently";
       }
-    }
 
-    // Update Up Next list
-    function updateUpNext() {
       nextVideosEl.innerHTML = "";
-      const now = new Date();
-      const upcoming = schedule.filter(v => new Date(v.startTime) > now);
-      upcoming.forEach(v => {
+      schedule.filter(v => new Date(v.startTime) > now).forEach(v => {
         const div = document.createElement("div");
         div.className = "next-video-card";
         div.innerText = `${v.title} at ${new Date(v.startTime).toLocaleTimeString()}`;
@@ -139,11 +86,8 @@
       });
     }
 
-    // Refresh live video every 5 seconds (no need for 1s)
-    setInterval(fetchSchedule, 5000);
-
-    // Initial load
-    fetchSchedule();
+    setInterval(updateLiveVideo, 5000);
+    updateLiveVideo();
   </script>
 </body>
 </html>
