@@ -13,50 +13,26 @@
       margin: 0;
       padding: 0;
     }
-
     header {
       padding: 15px;
       font-size: 24px;
       font-weight: bold;
       background: #111;
-      text-align: center;
     }
-
     #video-container {
       text-align: center;
       margin: 20px;
     }
-
     video {
       width: 80%;
       max-width: 900px;
       outline: none;
     }
-
     #video-title {
       margin-top: 10px;
       font-size: 22px;
       font-weight: bold;
     }
-
-    #up-next {
-      margin: 20px auto;
-      width: 80%;
-      max-width: 900px;
-    }
-
-    .next-video-card {
-      padding: 10px;
-      background: #222;
-      margin: 5px 0;
-      border-radius: 5px;
-      cursor: pointer;
-    }
-
-    .next-video-card:hover {
-      background: #333;
-    }
-
     #ticker {
       background: #111;
       padding: 10px;
@@ -69,31 +45,22 @@
   <header>BStream Live</header>
 
   <div id="video-container">
-    <video id="video-player" autoplay muted></video>
+    <video id="live-video" autoplay controls></video>
     <div id="video-title">Loading...</div>
-  </div>
-
-  <div id="up-next">
-    <h3>Up Next:</h3>
-    <div id="next-videos"></div>
   </div>
 
   <div id="ticker">Welcome to BStream! Enjoy your continuous TV experience.</div>
 
   <script>
-    const videoEl = document.getElementById("video-player");
+    const videoEl = document.getElementById("live-video");
     const titleEl = document.getElementById("video-title");
-    const nextVideosEl = document.getElementById("next-videos");
 
     let schedule = [];
     let currentVideo = null;
 
-    // Disable controls that allow seeking
-    videoEl.controls = true;
+    // Disable seeking
     videoEl.addEventListener("seeking", () => {
-      if (currentVideo) {
-        videoEl.currentTime = getCurrentPlayTime();
-      }
+      if (currentVideo) videoEl.currentTime = getCurrentPlayTime();
     });
 
     // Fetch schedule from backend
@@ -102,21 +69,16 @@
         const res = await fetch("/schedule");
         schedule = await res.json();
         updateLiveVideo();
-        updateUpNext();
       } catch (err) {
-        console.error("Error fetching schedule:", err);
+        console.error("Failed to fetch schedule", err);
       }
     }
 
     // Calculate current play time for live illusion
     function getCurrentPlayTime() {
-      if (!currentVideo) return 0;
       const now = new Date();
       const start = new Date(currentVideo.startTime);
-      let elapsed = Math.floor((now - start) / 1000);
-      if (elapsed < 0) elapsed = 0; // video not started yet
-      if (elapsed > currentVideo.duration) elapsed = currentVideo.duration; // finished
-      return elapsed;
+      return Math.floor((now - start) / 1000);
     }
 
     // Update currently live video
@@ -129,9 +91,9 @@
       });
 
       if (currentVideo) {
-        const newSrc = `/video/${currentVideo.id}`;
-        if (videoEl.src !== newSrc) {
-          videoEl.src = newSrc;
+        const videoSrc = `/video/${currentVideo.id}`;
+        if (videoEl.src !== videoSrc) {
+          videoEl.src = videoSrc;
           videoEl.currentTime = getCurrentPlayTime();
           videoEl.play();
           titleEl.innerText = currentVideo.title;
@@ -144,23 +106,8 @@
       }
     }
 
-    // Update Up Next list
-    function updateUpNext() {
-      nextVideosEl.innerHTML = "";
-      const now = new Date();
-      const upcoming = schedule.filter(v => new Date(v.startTime) > now);
-      upcoming.forEach(v => {
-        const div = document.createElement("div");
-        div.className = "next-video-card";
-        div.innerText = `${v.title} at ${new Date(v.startTime).toLocaleTimeString()}`;
-        nextVideosEl.appendChild(div);
-      });
-    }
-
     // Refresh live video every second
-    setInterval(() => {
-      fetchSchedule();
-    }, 1000);
+    setInterval(fetchSchedule, 1000);
 
     // Initial load
     fetchSchedule();
