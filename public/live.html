@@ -2,66 +2,62 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BStream Live</title>
+
+  <!-- Video.js CSS -->
+  <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
   <style>
-    body { font-family: Arial; background: #000; color: #fff; margin: 0; padding: 0; text-align: center; }
-    video { width: 80%; max-width: 900px; margin-top: 20px; outline: none; }
-    #video-title { margin-top: 10px; font-size: 22px; font-weight: bold; }
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background: #000;
+    }
+    #livePlayer {
+      width: 80%;
+      max-width: 900px;
+      height: auto;
+    }
   </style>
 </head>
 <body>
-  <h1>BStream Live</h1>
-  <video id="live-video" autoplay muted></video>
-  <div id="video-title">Loading...</div>
+
+  <!-- Video.js Player -->
+  <video
+    id="livePlayer"
+    class="video-js vjs-big-play-centered"
+    autoplay
+    controls
+    preload="auto"
+    data-setup="{}">
+    <source src="/video/current" type="video/mp4" />
+  </video>
+
+  <!-- Video.js JS -->
+  <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
 
   <script>
-    const videoEl = document.getElementById("live-video");
-    const titleEl = document.getElementById("video-title");
-    let currentVideo = null;
-    let schedule = [];
+    const player = videojs('livePlayer');
 
-    videoEl.controls = false;
-    videoEl.addEventListener("seeking", () => {
-      if (currentVideo) videoEl.currentTime = getCurrentPlayTime();
+    // Disable seeking
+    let lastTime = 0;
+    player.on('timeupdate', function () {
+      lastTime = player.currentTime();
+    });
+    player.on('seeking', function () {
+      const currentTime = player.currentTime();
+      if (Math.abs(currentTime - lastTime) > 1) {
+        player.currentTime(lastTime);
+      }
     });
 
-    function getCurrentPlayTime() {
-      const now = new Date();
-      const start = new Date(currentVideo.startTime);
-      return Math.floor((now - start) / 1000);
-    }
-
-    async function fetchSchedule() {
-      const res = await fetch("/schedule");
-      schedule = await res.json();
-      updateLiveVideo();
-    }
-
-    function updateLiveVideo() {
-      const now = new Date();
-      currentVideo = schedule.find(v => {
-        const start = new Date(v.startTime);
-        const end = new Date(start.getTime() + v.duration * 1000);
-        return now >= start && now <= end;
-      });
-
-      if (currentVideo) {
-        if (videoEl.src !== currentVideo.url) {
-          videoEl.src = currentVideo.url;
-          videoEl.currentTime = getCurrentPlayTime();
-          videoEl.play();
-          titleEl.innerText = currentVideo.title;
-        } else {
-          videoEl.currentTime = getCurrentPlayTime();
-        }
-      } else {
-        videoEl.src = "";
-        titleEl.innerText = "No live video currently";
-      }
-    }
-
-    setInterval(fetchSchedule, 1000);
-    fetchSchedule();
+    // Prevent right-click save
+    document.getElementById('livePlayer').addEventListener('contextmenu', e => e.preventDefault());
   </script>
+
 </body>
 </html>
