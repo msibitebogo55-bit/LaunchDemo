@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>BStream Live</title>
   <style>
-    body { font-family: Arial, sans-serif; background: #000; color: #fff; text-align: center; }
+    body { font-family: Arial; background: #000; color: #fff; margin: 0; padding: 0; text-align: center; }
     video { width: 80%; max-width: 900px; margin-top: 20px; outline: none; }
     #video-title { margin-top: 10px; font-size: 22px; font-weight: bold; }
   </style>
@@ -18,44 +18,50 @@
     const videoEl = document.getElementById("live-video");
     const titleEl = document.getElementById("video-title");
     let currentVideo = null;
+    let schedule = [];
 
-    // Disable controls and seeking
     videoEl.controls = false;
     videoEl.addEventListener("seeking", () => {
       if (currentVideo) videoEl.currentTime = getCurrentPlayTime();
     });
 
-    // Get current play time
     function getCurrentPlayTime() {
       const now = new Date();
       const start = new Date(currentVideo.startTime);
       return Math.floor((now - start) / 1000);
     }
 
-    // Fetch live video
-    async function updateLiveVideo() {
-      const res = await fetch("/now");
-      const video = await res.json();
-      if (!video.id) {
-        titleEl.innerText = "No live video currently";
-        videoEl.src = "";
-        return;
-      }
+    async function fetchSchedule() {
+      const res = await fetch("/schedule");
+      schedule = await res.json();
+      updateLiveVideo();
+    }
 
-      currentVideo = video;
-      if (videoEl.src !== `/video/${video.id}`) {
-        videoEl.src = `/video/${video.id}`;
-        videoEl.currentTime = getCurrentPlayTime();
-        videoEl.play();
-        titleEl.innerText = video.title;
+    function updateLiveVideo() {
+      const now = new Date();
+      currentVideo = schedule.find(v => {
+        const start = new Date(v.startTime);
+        const end = new Date(start.getTime() + v.duration * 1000);
+        return now >= start && now <= end;
+      });
+
+      if (currentVideo) {
+        if (videoEl.src !== currentVideo.url) {
+          videoEl.src = currentVideo.url;
+          videoEl.currentTime = getCurrentPlayTime();
+          videoEl.play();
+          titleEl.innerText = currentVideo.title;
+        } else {
+          videoEl.currentTime = getCurrentPlayTime();
+        }
       } else {
-        videoEl.currentTime = getCurrentPlayTime();
+        videoEl.src = "";
+        titleEl.innerText = "No live video currently";
       }
     }
 
-    // Refresh every second
-    setInterval(updateLiveVideo, 1000);
-    updateLiveVideo();
+    setInterval(fetchSchedule, 1000);
+    fetchSchedule();
   </script>
 </body>
 </html>
