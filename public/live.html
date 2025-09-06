@@ -4,33 +4,58 @@
   <meta charset="UTF-8">
   <title>BStream Live</title>
   <style>
-    body { background: #000; color: #fff; text-align: center; font-family: Arial, sans-serif; }
-    video { width: 80%; max-width: 900px; margin-top: 20px; }
+    body { font-family: Arial, sans-serif; background: #000; color: #fff; text-align: center; }
+    video { width: 80%; max-width: 900px; margin-top: 20px; outline: none; }
+    #video-title { margin-top: 10px; font-size: 22px; font-weight: bold; }
   </style>
 </head>
 <body>
   <h1>BStream Live</h1>
-  <video id="live-video" controls autoplay>
-    Your browser does not support HTML5 video.
-  </video>
+  <video id="live-video" autoplay muted></video>
+  <div id="video-title">Loading...</div>
 
   <script>
-    async function loadVideo() {
-      try {
-        const res = await fetch('/now');
-        const video = await res.json();
-        const videoEl = document.getElementById('live-video');
+    const videoEl = document.getElementById("live-video");
+    const titleEl = document.getElementById("video-title");
+    let currentVideo = null;
 
-        if (video && video.url) {
-          videoEl.src = video.url;
-        } else {
-          videoEl.src = "";
-        }
-      } catch (err) {
-        console.error("Error loading video:", err);
+    // Disable controls and seeking
+    videoEl.controls = false;
+    videoEl.addEventListener("seeking", () => {
+      if (currentVideo) videoEl.currentTime = getCurrentPlayTime();
+    });
+
+    // Get current play time
+    function getCurrentPlayTime() {
+      const now = new Date();
+      const start = new Date(currentVideo.startTime);
+      return Math.floor((now - start) / 1000);
+    }
+
+    // Fetch live video
+    async function updateLiveVideo() {
+      const res = await fetch("/now");
+      const video = await res.json();
+      if (!video.id) {
+        titleEl.innerText = "No live video currently";
+        videoEl.src = "";
+        return;
+      }
+
+      currentVideo = video;
+      if (videoEl.src !== `/video/${video.id}`) {
+        videoEl.src = `/video/${video.id}`;
+        videoEl.currentTime = getCurrentPlayTime();
+        videoEl.play();
+        titleEl.innerText = video.title;
+      } else {
+        videoEl.currentTime = getCurrentPlayTime();
       }
     }
 
+    // Refresh every second
+    setInterval(updateLiveVideo, 1000);
+    updateLiveVideo();
   </script>
 </body>
 </html>
