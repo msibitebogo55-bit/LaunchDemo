@@ -2,8 +2,8 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
-const fs = require("fs");
-const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 const app = express();
 app.use(express.json());
@@ -36,38 +36,54 @@ app.get("/upload-page", checkAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public/upload.html"));
 });
 
-// Add video to schedule (already uploaded to S3)
-app.post("/schedule-video", checkAuth, (req, res) => {
-  const { title, url, startTime, duration } = req.body;
-  if (!title || !url || !startTime || !duration) return res.status(400).json({ message: "Missing fields" });
+// Generate S3 pre-signed URL for upload
+app.post("/upload-url", checkAuth, async (req, res) => {
+  try {
+    const { fileName, contentType, title, startTime, duration } = req.body;
+    if (!fileName || !contentType || !startTime) return res.status(400).json({ message: "Missing parameters" });
 
-  let startDate = new Date(startTime);
-  const dur = parseInt(duration);
+    let dur = parseInt(duration) || 3600;
+    let startDate = new Date(startTime);
 
-  // Avoid overlap
-  schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-  for (let video of schedules) {
-    const existingStart = new Date(video.startTime);
-    const existingEnd = new Date(existingStart.getTime() + video.duration * 1000);
-    const newEnd = new Date(startDate.getTime() + dur * 1000);
-    if (startDate < existingEnd && newEnd > existingStart) {
-      startDate = new Date(existingEnd.getTime());
+    // Sort schedule and prevent overlaps
+    schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+    for (let video of schedules) {
+      const existingStart = new Date(video.startTime);
+      const existingEnd = new Date(existingStart.getTime() + video.duration * 1000);
+      const newEnd = new Date(startDate.getTime() + dur * 1000);
+      if (startDate < existingEnd && newEnd > existingStart) {
+        startDate = new Date(existingEnd.getTime());
+      }
     }
+
+    const key = Date.now() + "-" + fileName;
+
+    const command = new PutObjectCommand({
+      Bucket: process.env.S3_BUCKET_NAME,
+      Key: key,
+      ContentType: contentType,
+    });
+
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+
+    const videoData = {
+      id: Date.now(),
+      title: title || fileName,
+      url: `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`,
+      startTime: startDate,
+      duration: dur,
+    };
+
+    schedules.push(videoData);
+
+    res.json({ uploadUrl, video: videoData });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to generate upload URL" });
   }
-
-  const videoData = {
-    id: Date.now(),
-    title,
-    url,
-    startTime: startDate,
-    duration: dur,
-  };
-  schedules.push(videoData);
-
-  res.json({ message: "Scheduled!", video: videoData });
 });
 
-// Get currently live video
+// Current live video
 app.get("/now", (req, res) => {
   const now = new Date();
   const current = schedules.find(v => {
@@ -83,24 +99,11 @@ app.get("/schedule", (req, res) => {
   res.json(schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime)));
 });
 
-// Stream video directly from S3 to user
-app.get("/video/:id", async (req, res) => {
+// Redirect video requests to S3
+app.get("/video/:id", (req, res) => {
   const video = schedules.find(v => v.id == req.params.id);
   if (!video) return res.status(404).send("Video not found");
-
-  try {
-    const command = new GetObjectCommand({
-      Bucket: process.env.S3_BUCKET_NAME,
-      Key: video.url.split("/").pop(),
-    });
-    const s3Stream = (await s3.send(command)).Body;
-
-    res.setHeader("Content-Type", "video/mp4");
-    s3Stream.pipe(res);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Failed to stream video");
-  }
+  res.redirect(video.url);
 });
 
 const PORT = process.env.PORT || 5000;
