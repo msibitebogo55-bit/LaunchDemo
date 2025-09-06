@@ -2,22 +2,12 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
-const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const fetch = require("node-fetch");
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 app.use(express.static(path.join(__dirname, "public")));
-
-// AWS S3 client
-const s3 = new S3Client({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  },
-});
 
 // In-memory schedule
 let schedules = [];
@@ -36,36 +26,18 @@ app.get("/upload-page", checkAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public/upload.html"));
 });
 
-// Generate S3 pre-signed URL for upload
+// Upload handler (simplified for clarity)
 app.post("/upload-url", checkAuth, async (req, res) => {
   try {
     const { fileName, contentType, title, startTime, duration } = req.body;
-    if (!fileName || !contentType || !startTime) return res.status(400).json({ message: "Missing parameters" });
-
-    let dur = parseInt(duration) || 3600;
-    let startDate = new Date(startTime);
-
-    // Sort schedule and prevent overlaps
-    schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-    for (let video of schedules) {
-      const existingStart = new Date(video.startTime);
-      const existingEnd = new Date(existingStart.getTime() + video.duration * 1000);
-      const newEnd = new Date(startDate.getTime() + dur * 1000);
-      if (startDate < existingEnd && newEnd > existingStart) {
-        startDate = new Date(existingEnd.getTime());
-      }
+    if (!fileName || !contentType || !startTime) {
+      return res.status(400).json({ message: "Missing parameters" });
     }
 
+    const dur = parseInt(duration) || 3600;
+    let startDate = new Date(startTime);
+
     const key = Date.now() + "-" + fileName;
-
-    const command = new PutObjectCommand({
-      Bucket: process.env.S3_BUCKET_NAME,
-      Key: key,
-      ContentType: contentType,
-    });
-
-    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
-
     const videoData = {
       id: Date.now(),
       title: title || fileName,
@@ -73,17 +45,16 @@ app.post("/upload-url", checkAuth, async (req, res) => {
       startTime: startDate,
       duration: dur,
     };
-
     schedules.push(videoData);
 
-    res.json({ uploadUrl, video: videoData });
+    res.json({ video: videoData });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to generate upload URL" });
   }
 });
 
-// Current live video
+// Current live video metadata
 app.get("/now", (req, res) => {
   const now = new Date();
   const current = schedules.find(v => {
@@ -99,11 +70,32 @@ app.get("/schedule", (req, res) => {
   res.json(schedules.sort((a, b) => new Date(a.startTime) - new Date(b.startTime)));
 });
 
-// Redirect video requests to S3
-app.get("/video/:id", (req, res) => {
-  const video = schedules.find(v => v.id == req.params.id);
-  if (!video) return res.status(404).send("Video not found");
-  res.redirect(video.url);
+// NEW: Current video streaming
+app.get("/video/current", async (req, res) => {
+  const now = new Date();
+  const current = schedules.find(v => {
+    const start = new Date(v.startTime);
+    const end = new Date(start.getTime() + v.duration * 1000);
+    return now >= start && now <= end;
+  });
+
+  if (!current) {
+    return res.status(404).send("No live video right now.");
+  }
+
+  try {
+    // Proxy the S3 file so it streams properly
+    const range = req.headers.range;
+    const s3Url = current.url;
+
+    const s3Res = await fetch(s3Url, { headers: range ? { Range: range } : {} });
+
+    res.writeHead(s3Res.status, Object.fromEntries(s3Res.headers));
+    s3Res.body.pipe(res);
+  } catch (err) {
+    console.error("Error streaming video:", err);
+    res.status(500).send("Error streaming video");
+  }
 });
 
 const PORT = process.env.PORT || 5000;
